@@ -1,42 +1,9 @@
-const storageKey = "zfl17-film-strip-desk";
-
-const fallbackThumbs = ["#d49b35", "#347d89", "#b54d48", "#4d7656", "#6d6378"];
-
-const defaultState = {
-  reelTitle: "春日试映A卷",
-  segments: [
-    {
-      id: crypto.randomUUID(),
-      code: "A-001",
-      duration: 18,
-      shift: "正常",
-      damage: "完好",
-      note: "开场街景，节奏平稳，适合保留原顺序。",
-      thumb: ""
-    },
-    {
-      id: crypto.randomUUID(),
-      code: "A-006",
-      duration: 9,
-      shift: "偏红",
-      damage: "轻微划痕",
-      note: "人物近景左侧有划痕，试映时留意是否明显。",
-      thumb: ""
-    },
-    {
-      id: crypto.randomUUID(),
-      code: "A-012",
-      duration: 14,
-      shift: "褪色",
-      damage: "接片松动",
-      note: "接片位置靠近段尾，放映前建议重新压平。",
-      thumb: ""
-    }
-  ]
-};
-
-let state = loadState();
+// 页面交互：渲染清单、统计与提醒，响应录入、排序和修复登记操作。
+// 判定逻辑走 FilmRules，清单读写走 FilmStore。
+let state = FilmStore.loadState();
 let draggedId = null;
+let repairEditingId = null;
+let repairError = "";
 
 const els = {
   reelTitle: document.querySelector("#reelTitle"),
@@ -54,50 +21,57 @@ const els = {
   totalDuration: document.querySelector("#totalDuration"),
   damageCount: document.querySelector("#damageCount"),
   segmentCount: document.querySelector("#segmentCount"),
+  pendingCount: document.querySelector("#pendingCount"),
+  skippedCount: document.querySelector("#skippedCount"),
   exportBtn: document.querySelector("#exportBtn")
 };
-
-function loadState() {
-  const saved = localStorage.getItem(storageKey);
-  if (!saved) return structuredClone(defaultState);
-  try {
-    return { ...structuredClone(defaultState), ...JSON.parse(saved) };
-  } catch {
-    return structuredClone(defaultState);
-  }
-}
-
-function saveState() {
-  localStorage.setItem(storageKey, JSON.stringify(state));
-}
 
 function getFilteredSegments() {
   const color = els.colorFilter.value;
   const keyword = els.searchInput.value.trim();
   return state.segments.filter((item) => {
     const matchesColor = color === "all" || item.shift === color;
-    const matchesKeyword = !keyword || `${item.code}${item.note}${item.damage}`.includes(keyword);
+    const matchesKeyword = !keyword || `${item.code}${item.note}${item.damage}${item.repairStatus}`.includes(keyword);
     return matchesColor && matchesKeyword;
   });
 }
 
 function renderStats() {
-  const total = state.segments.reduce((sum, item) => sum + Number(item.duration), 0);
+  const tally = FilmRules.repairTally(state.segments);
   const damaged = state.segments.filter((item) => item.damage !== "完好").length;
-  els.totalDuration.textContent = formatDuration(total);
+  els.totalDuration.textContent = formatDuration(FilmRules.screeningDuration(state.segments));
   els.damageCount.textContent = damaged;
   els.segmentCount.textContent = state.segments.length;
+  els.pendingCount.textContent = tally.pending;
+  els.skippedCount.textContent = tally.skipped;
+}
+
+function statusTag(status) {
+  if (status === FilmRules.STATUS_PENDING) return `<span class="tag pending">待修</span>`;
+  if (status === FilmRules.STATUS_REPAIRED) return `<span class="tag repaired">已修复</span>`;
+  if (status === FilmRules.STATUS_SKIPPED) return `<span class="tag skipped">跳过</span>`;
+  return "";
+}
+
+function archiveLine(item) {
+  if (!item.originalShift && !item.originalDamage) return "";
+  const method = item.repairMethod ? `｜修复方式：${escapeHtml(item.repairMethod)}` : "";
+  return `<p class="repair-archive">留档：原偏移 ${escapeHtml(item.originalShift)}｜原破损 ${escapeHtml(item.originalDamage)}${method}</p>`;
 }
 
 function renderList() {
   const segments = getFilteredSegments();
   els.segmentList.innerHTML =
     segments
-      .map((item, index) => {
+      .map((item) => {
         const realIndex = state.segments.findIndex((segment) => segment.id === item.id);
         const hasDamage = item.damage !== "完好";
+        const countable = FilmRules.countsForScreening(item);
+        const editing = repairEditingId === item.id;
+        const selectedStatus = editing ? FilmRules.STATUS_REPAIRED : item.repairStatus;
+        const showMethod = editing || item.repairStatus === FilmRules.STATUS_REPAIRED;
         return `
-          <article class="segment-card" draggable="true" data-id="${item.id}">
+          <article class="segment-card ${countable ? "" : "not-counted"}" draggable="true" data-id="${item.id}">
             <div class="thumb">
               ${
                 item.thumb
@@ -108,13 +82,26 @@ function renderList() {
             <div class="segment-main">
               <div class="segment-title">
                 <strong>${realIndex + 1}. ${escapeHtml(item.code)}</strong>
-                <span>${formatDuration(item.duration)}</span>
+                <span>${formatDuration(item.duration)}${countable ? "" : `<em class="duration-hint">不计入时长</em>`}</span>
               </div>
               <div class="tag-row">
                 <span class="tag">${escapeHtml(item.shift)}</span>
                 <span class="tag ${hasDamage ? "damage" : "ok"}">${escapeHtml(item.damage)}</span>
+                ${statusTag(item.repairStatus)}
               </div>
               <p class="segment-note">${escapeHtml(item.note || "没有备注。")}</p>
+              ${archiveLine(item)}
+              <div class="repair-row">
+                <span class="repair-label">修复登记</span>
+                <select data-repair-select="${item.id}">
+                  ${FilmRules.REPAIR_STATUSES.map(
+                    (status) => `<option value="${status}" ${status === selectedStatus ? "selected" : ""}>${status}</option>`
+                  ).join("")}
+                </select>
+                ${showMethod ? `<input data-repair-method="${item.id}" type="text" placeholder="修复方式（必填）" value="${escapeHtml(item.repairMethod)}" />` : ""}
+                ${showMethod ? `<button type="button" data-repair-apply="${item.id}">登记修复</button>` : ""}
+              </div>
+              ${editing && repairError ? `<p class="repair-error">${escapeHtml(repairError)}</p>` : ""}
             </div>
             <div class="segment-actions">
               <button type="button" title="上移" data-move-up="${item.id}">↑</button>
@@ -128,24 +115,22 @@ function renderList() {
 }
 
 function renderWarnings() {
-  const warnings = state.segments.filter((item) => item.damage !== "完好" || item.shift !== "正常");
+  const warnings = FilmRules.warningEntries(state.segments);
   els.warningList.innerHTML =
     warnings
-      .map((item) => {
-        const index = state.segments.findIndex((segment) => segment.id === item.id) + 1;
-        const reasons = [item.shift !== "正常" ? item.shift : "", item.damage !== "完好" ? item.damage : ""].filter(Boolean).join(" · ");
-        return `
+      .map(
+        ({ segment, index, reasons }) => `
           <div class="warning-item">
-            <strong>${index}. ${escapeHtml(item.code)}</strong>
-            <span>${escapeHtml(reasons)}${item.note ? `：${escapeHtml(item.note)}` : ""}</span>
+            <strong>${index}. ${escapeHtml(segment.code)}</strong>
+            <span>${escapeHtml(reasons)}${segment.note ? `：${escapeHtml(segment.note)}` : ""}</span>
           </div>
-        `;
-      })
-      .join("") || `<p class="empty">当前清单没有颜色偏移或破损提醒。</p>`;
+        `
+      )
+      .join("") || `<p class="empty">当前清单没有颜色偏移、破损或修复跟进提醒。</p>`;
 }
 
 function renderAll() {
-  saveState();
+  FilmStore.saveState(state);
   els.reelTitle.value = state.reelTitle;
   renderStats();
   renderList();
@@ -175,15 +160,16 @@ function readFileAsDataUrl(file) {
 async function addSegment(event) {
   event.preventDefault();
   const thumb = await readFileAsDataUrl(els.thumbInput.files[0]);
-  state.segments.push({
-    id: crypto.randomUUID(),
-    code: els.codeInput.value.trim(),
-    duration: Number(els.durationInput.value),
-    shift: els.shiftInput.value,
-    damage: els.damageInput.value,
-    note: els.noteInput.value.trim(),
-    thumb
-  });
+  state.segments.push(
+    FilmStore.createSegment({
+      code: els.codeInput.value.trim(),
+      duration: Number(els.durationInput.value),
+      shift: els.shiftInput.value,
+      damage: els.damageInput.value,
+      note: els.noteInput.value.trim(),
+      thumb
+    })
+  );
   els.segmentForm.reset();
   els.durationInput.value = 12;
   renderAll();
@@ -198,12 +184,42 @@ function moveSegment(id, direction) {
   renderAll();
 }
 
+function commitRepair(id, status, method = "") {
+  const segment = state.segments.find((item) => item.id === id);
+  if (!segment) return;
+  const result = FilmRules.registerRepair(segment, status, method);
+  if (!result.ok) {
+    repairEditingId = id;
+    repairError = result.error;
+    renderList();
+    return;
+  }
+  state.segments = state.segments.map((item) => (item.id === id ? result.segment : item));
+  repairEditingId = null;
+  repairError = "";
+  renderAll();
+}
+
+function applyRepair(id) {
+  const input = els.segmentList.querySelector(`[data-repair-method="${id}"]`);
+  commitRepair(id, FilmRules.STATUS_REPAIRED, input ? input.value : "");
+}
+
 function exportList() {
+  const tally = FilmRules.repairTally(state.segments);
   const lines = [
     `胶片卷：${state.reelTitle || "未命名胶片卷"}`,
-    `总时长：${formatDuration(state.segments.reduce((sum, item) => sum + Number(item.duration), 0))}`,
+    `总时长：${formatDuration(FilmRules.screeningDuration(state.segments))}（待修 ${tally.pending} 段、跳过 ${tally.skipped} 段不计入）`,
     "",
-    ...state.segments.map((item, index) => `${index + 1}. ${item.code}｜${formatDuration(item.duration)}｜${item.shift}｜${item.damage}｜${item.note || "无备注"}`)
+    ...state.segments.map((item, index) => {
+      const parts = [`${index + 1}. ${item.code}`, formatDuration(item.duration), item.shift, item.damage];
+      if (item.repairStatus !== FilmRules.STATUS_NONE) parts.push(`修复登记：${item.repairStatus}`);
+      if (item.repairStatus === FilmRules.STATUS_REPAIRED) {
+        parts.push(`修复方式：${item.repairMethod}`, `留档：${item.originalShift}/${item.originalDamage}`);
+      }
+      parts.push(item.note || "无备注");
+      return parts.join("｜");
+    })
   ];
   const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
   const link = document.createElement("a");
@@ -222,9 +238,11 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const fallbackThumbs = ["#d49b35", "#347d89", "#b54d48", "#4d7656", "#6d6378"];
+
 els.reelTitle.addEventListener("input", () => {
   state.reelTitle = els.reelTitle.value;
-  saveState();
+  FilmStore.saveState(state);
 });
 els.colorFilter.addEventListener("change", renderList);
 els.searchInput.addEventListener("input", renderList);
@@ -235,12 +253,39 @@ els.segmentList.addEventListener("click", (event) => {
   const up = event.target.closest("[data-move-up]");
   const down = event.target.closest("[data-move-down]");
   const remove = event.target.closest("[data-delete]");
+  const apply = event.target.closest("[data-repair-apply]");
   if (up) moveSegment(up.dataset.moveUp, -1);
   if (down) moveSegment(down.dataset.moveDown, 1);
+  if (apply) applyRepair(apply.dataset.repairApply);
   if (remove) {
+    if (repairEditingId === remove.dataset.delete) {
+      repairEditingId = null;
+      repairError = "";
+    }
     state.segments = state.segments.filter((item) => item.id !== remove.dataset.delete);
     renderAll();
   }
+});
+
+els.segmentList.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-repair-select]");
+  if (!select) return;
+  const id = select.dataset.repairSelect;
+  if (select.value === FilmRules.STATUS_REPAIRED) {
+    repairEditingId = id;
+    repairError = "";
+    renderList();
+    return;
+  }
+  commitRepair(id, select.value);
+});
+
+els.segmentList.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  const input = event.target.closest("[data-repair-method]");
+  if (!input) return;
+  event.preventDefault();
+  applyRepair(input.dataset.repairMethod);
 });
 
 els.segmentList.addEventListener("dragstart", (event) => {

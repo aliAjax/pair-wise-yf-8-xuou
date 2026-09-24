@@ -115,7 +115,7 @@ h2 {
 
 .hero-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  grid-template-columns: repeat(5, minmax(100px, 1fr));
   gap: 10px;
 }
 
@@ -276,6 +276,81 @@ label {
 .tag.ok {
   background: rgba(77, 118, 86, 0.14);
   color: var(--green);
+}
+
+.tag.pending {
+  background: rgba(212, 155, 53, 0.18);
+  color: #8a6414;
+}
+
+.tag.repaired {
+  background: rgba(77, 118, 86, 0.14);
+  color: var(--green);
+}
+
+.tag.skipped {
+  background: rgba(105, 113, 121, 0.16);
+  color: var(--muted);
+}
+
+.segment-card.not-counted {
+  border-style: dashed;
+}
+
+.segment-card.not-counted .thumb {
+  opacity: 0.55;
+}
+
+.duration-hint {
+  margin-left: 6px;
+  color: var(--red);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.repair-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.repair-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.repair-row select {
+  width: auto;
+  padding: 7px 9px;
+}
+
+.repair-row input {
+  flex: 1;
+  min-width: 140px;
+  width: auto;
+  padding: 7px 9px;
+}
+
+.repair-row button {
+  padding: 7px 11px;
+}
+
+.repair-archive {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.repair-error {
+  margin: 6px 0 0;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .segment-note {
