@@ -15,7 +15,7 @@
         </div>
         <div class="hero-stats">
           <div>
-            <span>总时长</span>
+            <span>总时长（不含跳过）</span>
             <strong id="totalDuration">0:00</strong>
           </div>
           <div>
@@ -25,6 +25,14 @@
           <div>
             <span>片段数</span>
             <strong id="segmentCount">0</strong>
+          </div>
+          <div>
+            <span>待修</span>
+            <strong id="pendingCount">0</strong>
+          </div>
+          <div>
+            <span>跳过</span>
+            <strong id="skippedCount">0</strong>
           </div>
         </div>
       </header>
@@ -111,6 +119,8 @@
       </section>
     </main>
 
+    <script src="rules.js"></script>
+    <script src="store.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

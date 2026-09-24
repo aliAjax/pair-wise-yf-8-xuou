@@ -1,41 +1,10 @@
-const storageKey = "zfl17-film-strip-desk";
+// 页面交互：渲染清单并绑定事件。判定规则见 rules.js，清单保存见 store.js。
+const rules = FilmDesk.rules;
+const store = FilmDesk.store;
 
 const fallbackThumbs = ["#d49b35", "#347d89", "#b54d48", "#4d7656", "#6d6378"];
 
-const defaultState = {
-  reelTitle: "春日试映A卷",
-  segments: [
-    {
-      id: crypto.randomUUID(),
-      code: "A-001",
-      duration: 18,
-      shift: "正常",
-      damage: "完好",
-      note: "开场街景，节奏平稳，适合保留原顺序。",
-      thumb: ""
-    },
-    {
-      id: crypto.randomUUID(),
-      code: "A-006",
-      duration: 9,
-      shift: "偏红",
-      damage: "轻微划痕",
-      note: "人物近景左侧有划痕，试映时留意是否明显。",
-      thumb: ""
-    },
-    {
-      id: crypto.randomUUID(),
-      code: "A-012",
-      duration: 14,
-      shift: "褪色",
-      damage: "接片松动",
-      note: "接片位置靠近段尾，放映前建议重新压平。",
-      thumb: ""
-    }
-  ]
-};
-
-let state = loadState();
+let state = store.loadState();
 let draggedId = null;
 
 const els = {
@@ -54,50 +23,75 @@ const els = {
   totalDuration: document.querySelector("#totalDuration"),
   damageCount: document.querySelector("#damageCount"),
   segmentCount: document.querySelector("#segmentCount"),
+  pendingCount: document.querySelector("#pendingCount"),
+  skippedCount: document.querySelector("#skippedCount"),
   exportBtn: document.querySelector("#exportBtn")
 };
-
-function loadState() {
-  const saved = localStorage.getItem(storageKey);
-  if (!saved) return structuredClone(defaultState);
-  try {
-    return { ...structuredClone(defaultState), ...JSON.parse(saved) };
-  } catch {
-    return structuredClone(defaultState);
-  }
-}
-
-function saveState() {
-  localStorage.setItem(storageKey, JSON.stringify(state));
-}
 
 function getFilteredSegments() {
   const color = els.colorFilter.value;
   const keyword = els.searchInput.value.trim();
   return state.segments.filter((item) => {
     const matchesColor = color === "all" || item.shift === color;
-    const matchesKeyword = !keyword || `${item.code}${item.note}${item.damage}`.includes(keyword);
+    const matchesKeyword = !keyword ||
+      `${item.code}${item.note}${item.damage}${item.repair?.method || ""}`.includes(keyword);
     return matchesColor && matchesKeyword;
   });
 }
 
 function renderStats() {
-  const total = state.segments.reduce((sum, item) => sum + Number(item.duration), 0);
-  const damaged = state.segments.filter((item) => item.damage !== "完好").length;
-  els.totalDuration.textContent = formatDuration(total);
-  els.damageCount.textContent = damaged;
-  els.segmentCount.textContent = state.segments.length;
+  const stats = rules.getStats(state.segments);
+  els.totalDuration.textContent = rules.formatDuration(stats.totalSeconds);
+  els.damageCount.textContent = stats.damaged;
+  els.segmentCount.textContent = stats.total;
+  els.pendingCount.textContent = stats.pending;
+  els.skippedCount.textContent = stats.skipped;
+}
+
+function renderRepairBox(item) {
+  const status = rules.getRepairStatus(item);
+  const options = Object.entries(rules.REPAIR_STATUS_LABELS)
+    .map(([value, label]) =>
+      `<option value="${value}" ${value === status ? "selected" : ""}>${label}</option>`
+    )
+    .join("");
+  const record = item.repair || {};
+  const archive = record.method
+    ? `<p class="repair-archive">留档：原偏移 ${escapeHtml(record.originalShift)} · 原破损 ${escapeHtml(record.originalDamage)}｜修复方式：${escapeHtml(record.method)}${record.repairedAt ? `｜${record.repairedAt.slice(0, 10)}` : ""}</p>`
+    : "";
+  return `
+    <div class="repair-box">
+      <div class="repair-form">
+        <select data-repair-status="${item.id}" title="修复状态">${options}</select>
+        <input type="text" data-repair-method="${item.id}"
+               placeholder="修复方式（登记已修复时必填）" value="${escapeHtml(record.method || "")}" />
+        <button type="button" data-repair-apply="${item.id}">登记</button>
+        ${
+          status === rules.REPAIR_STATUS.SKIPPED
+            ? `<button type="button" data-repair-restore="${item.id}">恢复计时</button>`
+            : ""
+        }
+      </div>
+      ${archive}
+    </div>
+  `;
 }
 
 function renderList() {
   const segments = getFilteredSegments();
   els.segmentList.innerHTML =
     segments
-      .map((item, index) => {
+      .map((item) => {
         const realIndex = state.segments.findIndex((segment) => segment.id === item.id);
         const hasDamage = item.damage !== "完好";
+        const status = rules.getRepairStatus(item);
+        const isSkipped = status === rules.REPAIR_STATUS.SKIPPED;
+        const statusTag =
+          status !== rules.REPAIR_STATUS.NONE
+            ? `<span class="tag repair ${status}">${rules.REPAIR_STATUS_LABELS[status]}</span>`
+            : "";
         return `
-          <article class="segment-card" draggable="true" data-id="${item.id}">
+          <article class="segment-card ${isSkipped ? "skipped" : ""}" draggable="true" data-id="${item.id}">
             <div class="thumb">
               ${
                 item.thumb
@@ -108,13 +102,15 @@ function renderList() {
             <div class="segment-main">
               <div class="segment-title">
                 <strong>${realIndex + 1}. ${escapeHtml(item.code)}</strong>
-                <span>${formatDuration(item.duration)}</span>
+                <span class="${isSkipped ? "duration-skipped" : ""}">${rules.formatDuration(item.duration)}${isSkipped ? "（不计入）" : ""}</span>
               </div>
               <div class="tag-row">
                 <span class="tag">${escapeHtml(item.shift)}</span>
                 <span class="tag ${hasDamage ? "damage" : "ok"}">${escapeHtml(item.damage)}</span>
+                ${statusTag}
               </div>
               <p class="segment-note">${escapeHtml(item.note || "没有备注。")}</p>
+              ${renderRepairBox(item)}
             </div>
             <div class="segment-actions">
               <button type="button" title="上移" data-move-up="${item.id}">↑</button>
@@ -128,35 +124,24 @@ function renderList() {
 }
 
 function renderWarnings() {
-  const warnings = state.segments.filter((item) => item.damage !== "完好" || item.shift !== "正常");
+  const warnings = rules.getWarnings(state.segments);
   els.warningList.innerHTML =
     warnings
-      .map((item) => {
-        const index = state.segments.findIndex((segment) => segment.id === item.id) + 1;
-        const reasons = [item.shift !== "正常" ? item.shift : "", item.damage !== "完好" ? item.damage : ""].filter(Boolean).join(" · ");
-        return `
-          <div class="warning-item">
-            <strong>${index}. ${escapeHtml(item.code)}</strong>
-            <span>${escapeHtml(reasons)}${item.note ? `：${escapeHtml(item.note)}` : ""}</span>
-          </div>
-        `;
-      })
-      .join("") || `<p class="empty">当前清单没有颜色偏移或破损提醒。</p>`;
+      .map(({ segment, index, reasons }) => `
+        <div class="warning-item">
+          <strong>${index + 1}. ${escapeHtml(segment.code)}</strong>
+          <span>${escapeHtml(reasons.join(" · "))}${segment.note ? `：${escapeHtml(segment.note)}` : ""}</span>
+        </div>
+      `)
+      .join("") || `<p class="empty">当前清单没有颜色偏移、破损或修复待办提醒。</p>`;
 }
 
 function renderAll() {
-  saveState();
+  store.saveState(state);
   els.reelTitle.value = state.reelTitle;
   renderStats();
   renderList();
   renderWarnings();
-}
-
-function formatDuration(seconds) {
-  const value = Number(seconds) || 0;
-  const minutes = Math.floor(value / 60);
-  const rest = String(value % 60).padStart(2, "0");
-  return `${minutes}:${rest}`;
 }
 
 function readFileAsDataUrl(file) {
@@ -182,7 +167,8 @@ async function addSegment(event) {
     shift: els.shiftInput.value,
     damage: els.damageInput.value,
     note: els.noteInput.value.trim(),
-    thumb
+    thumb,
+    repair: rules.createRepairRecord()
   });
   els.segmentForm.reset();
   els.durationInput.value = 12;
@@ -198,14 +184,33 @@ function moveSegment(id, direction) {
   renderAll();
 }
 
+function findSegment(id) {
+  return state.segments.find((item) => item.id === id);
+}
+
+function applyRepair(id) {
+  const segment = findSegment(id);
+  if (!segment) return;
+  const statusSelect = els.segmentList.querySelector(`[data-repair-status="${id}"]`);
+  const methodInput = els.segmentList.querySelector(`[data-repair-method="${id}"]`);
+  const result = rules.applyRepairStatus(segment, statusSelect.value, methodInput.value);
+  if (!result.ok) {
+    methodInput.setCustomValidity(result.error);
+    methodInput.reportValidity();
+    return;
+  }
+  renderAll();
+}
+
+function restoreTiming(id) {
+  const segment = findSegment(id);
+  if (!segment) return;
+  rules.applyRepairStatus(segment, rules.REPAIR_STATUS.NONE);
+  renderAll();
+}
+
 function exportList() {
-  const lines = [
-    `胶片卷：${state.reelTitle || "未命名胶片卷"}`,
-    `总时长：${formatDuration(state.segments.reduce((sum, item) => sum + Number(item.duration), 0))}`,
-    "",
-    ...state.segments.map((item, index) => `${index + 1}. ${item.code}｜${formatDuration(item.duration)}｜${item.shift}｜${item.damage}｜${item.note || "无备注"}`)
-  ];
-  const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+  const blob = new Blob([store.buildExportText(state)], { type: "text/plain;charset=utf-8" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
   link.download = `${state.reelTitle || "film-reel"}-checklist.txt`;
@@ -224,7 +229,7 @@ function escapeHtml(value) {
 
 els.reelTitle.addEventListener("input", () => {
   state.reelTitle = els.reelTitle.value;
-  saveState();
+  store.saveState(state);
 });
 els.colorFilter.addEventListener("change", renderList);
 els.searchInput.addEventListener("input", renderList);
@@ -235,12 +240,22 @@ els.segmentList.addEventListener("click", (event) => {
   const up = event.target.closest("[data-move-up]");
   const down = event.target.closest("[data-move-down]");
   const remove = event.target.closest("[data-delete]");
+  const repairApply = event.target.closest("[data-repair-apply]");
+  const repairRestore = event.target.closest("[data-repair-restore]");
   if (up) moveSegment(up.dataset.moveUp, -1);
   if (down) moveSegment(down.dataset.moveDown, 1);
   if (remove) {
     state.segments = state.segments.filter((item) => item.id !== remove.dataset.delete);
     renderAll();
   }
+  if (repairApply) applyRepair(repairApply.dataset.repairApply);
+  if (repairRestore) restoreTiming(repairRestore.dataset.repairRestore);
+});
+
+// 用户重新填写修复方式时，清掉必填校验提示。
+els.segmentList.addEventListener("input", (event) => {
+  const methodInput = event.target.closest("[data-repair-method]");
+  if (methodInput) methodInput.setCustomValidity("");
 });
 
 els.segmentList.addEventListener("dragstart", (event) => {

@@ -115,7 +115,7 @@ h2 {
 
 .hero-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 10px;
 }
 
@@ -296,6 +296,67 @@ label {
   padding: 0;
 }
 
+.repair-box {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+}
+
+.repair-form {
+  display: grid;
+  grid-template-columns: 92px minmax(120px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.repair-form select,
+.repair-form input {
+  padding: 8px 9px;
+  font-size: 13px;
+}
+
+.repair-form button {
+  padding: 8px 12px;
+}
+
+.tag.repair.pending {
+  background: rgba(212, 155, 53, 0.16);
+  color: var(--amber);
+}
+
+.tag.repair.repaired {
+  background: rgba(77, 118, 86, 0.14);
+  color: var(--green);
+}
+
+.tag.repair.skipped {
+  background: rgba(105, 113, 121, 0.16);
+  color: var(--muted);
+}
+
+.repair-archive {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.segment-card.skipped {
+  border-style: dashed;
+}
+
+.segment-card.skipped .thumb {
+  filter: grayscale(0.7);
+  opacity: 0.75;
+}
+
+.duration-skipped {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+
 .warning-list {
   display: grid;
   gap: 9px;
@@ -343,6 +404,10 @@ label {
 
   .segment-card {
     grid-template-columns: 1fr;
+  }
+
+  .repair-form {
+    grid-template-columns: 1fr 1fr;
   }
 
   .segment-actions {
